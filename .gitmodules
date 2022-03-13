@@ -1,0 +1,3 @@
+[submodule "TrackNet"]
+	path = TrackNet
+	url = https://nol.cs.nctu.edu.tw:234/open-source/TrackNet.git
