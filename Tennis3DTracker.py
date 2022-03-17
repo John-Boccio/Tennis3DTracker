@@ -4,7 +4,9 @@ import logging
 import collections
 import cv2
 
+import TennisCourtDetection
 import Tennis3DTrackerHelper
+from TennisCourtDetection import TennisCourtDetector
 
 # Set up logging
 logging.basicConfig(format='%(asctime)s [%(levelname)s] : %(message)s', level=logging.DEBUG)
@@ -68,7 +70,16 @@ for _ in range(2):
 ball_position_buffer = collections.deque(maxlen=15)
 while not input_video.atEndOfVideo:
     image = input_video.read_next()
-    out_image = image
+    out_image = image.copy()
+
+    tennis_court = TennisCourtDetector.TennisCourt(image)
+    new_court_detected = tennis_court.detect_court()
+    if new_court_detected:
+        logging.debug('Recalibrating camera using new detected keypoints')
+        out_image = tennis_court.draw_detected_court()
+    else:
+        logging.warning(f'Could not detect tennis court in frame {input_video.currentFrame}')
+    
     image = Tennis3DTrackerHelper.image_to_float_and_reshape(image, tracknet_dimensions)
     image_buffer.append(image)
 
@@ -81,3 +92,7 @@ while not input_video.atEndOfVideo:
         out_image = cv2.circle(out_image, position, radius=2, color=color, thickness=2)
     output_video.write_next(out_image)
     logging.debug(f'Ball position in frame[{input_video.currentFrame}] = {ball_position}')
+
+    if input_video.currentFrame == 300:
+        break
+

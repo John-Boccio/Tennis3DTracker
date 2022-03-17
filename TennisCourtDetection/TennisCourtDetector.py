@@ -159,7 +159,11 @@ class TennisCourt:
     ]
 
     def __init__(self, image, save_images_dir=None, save_images_name='detect-court') -> None:
-        self._image = image
+        self._image = image.copy()
+        height, width, _ = image.shape
+        self._height_scale = 360 / height
+        self._width_scale = 640 / width
+        
         self._rows, self._columns, _ = self._image.shape
         self._court_lines = {}
         self._court_keypoints = {}
@@ -187,7 +191,7 @@ class TennisCourt:
         image[:, :cut_columns_boundary[0]] = 0
         image[:, cut_columns_boundary[1]:] = 0
 
-        cut_rows_boundary = np.round([0.20 * self._rows, 0.90 * self._rows]).astype(np.uint64)
+        cut_rows_boundary = np.round([0.10 * self._rows, 0.90 * self._rows]).astype(np.uint64)
         image[:cut_rows_boundary[0], :] = 0
         image[cut_rows_boundary[1]:, :] = 0
 
@@ -196,6 +200,7 @@ class TennisCourt:
 
         # Step 3. Remove white pixels that are not part of a line of width tau
         tau_up_down, tau_left_right = (5, 5)
+        image_copy = image.copy()
         for r in range(self._rows):
             for c in range(self._columns):
                 if image[r, c] > 0:
@@ -208,8 +213,9 @@ class TennisCourt:
                     left_right_non_white = image[r, left] == 0 and image[r, right] == 0
                     up_down_non_white = image[up, c] == 0 and image[down, c] == 0
                     if left_right_non_white == up_down_non_white:
-                        image[r, c] = 0
-        
+                        image_copy[r, c] = 0
+        image = image_copy
+
         if self._save_images_path is not None:
             cv2.imwrite(self._save_images_path + '-tau-lines.jpg', image)
 
@@ -219,7 +225,7 @@ class TennisCourt:
         white_pixels = np.column_stack((white_pixels[0], white_pixels[1]))
         court_lines = []
         for _ in range(TennisCourt.LineID.NUMBER_OF_LINES):
-            model_robust, inliers = ransac(white_pixels, LineModelND, min_samples=3, residual_threshold=tau, max_trials=500)
+            model_robust, inliers = ransac(white_pixels, LineModelND, min_samples=2, residual_threshold=tau, max_trials=1000)
 
             line = np.array(white_pixels[inliers])
             white_pixels = np.array(white_pixels[[not inlier for inlier in inliers]])
@@ -245,7 +251,8 @@ class TennisCourt:
 
         if len(horizontal_court_lines) != 5 or len(vertical_court_lines) != 5:
             logging.debug(f'{len(horizontal_court_lines)} horizontal lines detected, {len(vertical_court_lines)} vertical lines detected, needed 5 of each')
-            return False
+            self.court_detected = False
+            return self.court_detected
         
         # Sort horizontal court lines by their midpoint row
         horizontal_court_lines = sorted(horizontal_court_lines, key=lambda x: x.midpoint[0])
@@ -290,26 +297,33 @@ class TennisCourt:
         self.court_detected = True
 
         if self._save_images_path:
-            original_image_copy = self._image.copy()
-            original_image_copy = self.draw_detected_keypoints(original_image_copy)
+            original_image_copy = self.draw_detected_keypoints()
             cv2.imwrite(self._save_images_path + '-keypoints.jpg', original_image_copy)
 
         if self._save_images_path:
-            original_image_copy = self._image.copy()
-            detected_court = self.draw_detected_court(original_image_copy)
+            detected_court = self.draw_detected_court()
             cv2.imwrite(self._save_images_path + '.jpg', detected_court)
 
         return self.court_detected
 
-    def draw_detected_keypoints(self, image):
+    def draw_detected_keypoints(self, image=None):
+        if not self.court_detected:
+            return None
+
+        if image is None:
+            image = self._image.copy()
+        
         for intersection_id in self._court_keypoints:
             row, col = self._court_keypoints[intersection_id]
             image = cv2.circle(image, center=(col, row), radius=5, color=(0, 0, 255), thickness=-1)
         return image
 
-    def draw_detected_court(self, image):
+    def draw_detected_court(self, image=None):
         if not self.court_detected:
             return None
+
+        if image is None:
+            image = self._image.copy()
 
         for p1_id, p2_id in TennisCourt.DRAW_COURT_KEYPOINT_PAIRS:
             p1 = self._court_keypoints[p1_id]
