@@ -158,6 +158,15 @@ class TennisCourt:
         (KeypointID.CLOSE_BASELINE_AND_RIGHT_DOUBLES_LINE, KeypointID.FAR_BASELINE_AND_RIGHT_DOUBLES_LINE)
     ]
 
+    KEYPOINT_WORLD_COORDINATES = {
+        KeypointID.CLOSE_BASELINE_AND_LEFT_DOUBLES_LINE : np.array([0.0, 0.0, 0.0, 1.0]),
+        KeypointID.FAR_BASELINE_AND_LEFT_DOUBLES_LINE : np.array([23.77, 0.0, 0.0, 1.0]),
+        KeypointID.FAR_BASELINE_AND_RIGHT_DOUBLES_LINE : np.array([23.77, 10.97, 0.0, 1.0]),
+        KeypointID.CLOSE_BASELINE_AND_RIGHT_SINGLES_LINE : np.array([0, 10.97, 0, 1.0]),
+        KeypointID.NET_LINE_LEFT_ENDPOINT : np.array([5.485, 0.91, 1.07, 1.0]),
+        KeypointID.NET_LINE_RIGHT_ENDPOINT : np.array([5.485, 10.51, 1.07, 1.0]),
+    }
+
     def __init__(self, image, save_images_dir=None, save_images_name='detect-court') -> None:
         self._image = image.copy()
         height, width, _ = image.shape
@@ -168,6 +177,8 @@ class TennisCourt:
         self._court_lines = {}
         self._court_keypoints = {}
         self.court_detected = False
+
+        self.M = np.zeros((3, 4))
 
         self._save_images_path = None
         if save_images_dir is not None:
@@ -305,6 +316,30 @@ class TennisCourt:
             cv2.imwrite(self._save_images_path + '.jpg', detected_court)
 
         return self.court_detected
+
+    def calibrate_camera(self):
+        keypoint_ordering = [
+            self.KeypointID.CLOSE_BASELINE_AND_LEFT_DOUBLES_LINE,
+            self.KeypointID.FAR_BASELINE_AND_LEFT_DOUBLES_LINE,
+            self.KeypointID.FAR_BASELINE_AND_RIGHT_DOUBLES_LINE,
+            self.KeypointID.CLOSE_BASELINE_AND_RIGHT_SINGLES_LINE,
+            self.KeypointID.NET_LINE_LEFT_ENDPOINT,
+            self.KeypointID.NET_LINE_RIGHT_ENDPOINT,
+        ]
+
+        P = np.zeros((len(keypoint_ordering)*2, 12))
+        for i, keypoint in enumerate(keypoint_ordering):
+            world_coordinate = self.KEYPOINT_WORLD_COORDINATES[keypoint]
+            image_coordinate = np.concatenate((self._court_keypoints[keypoint], [1.0]))
+            P[i*2, :4] = world_coordinate
+            P[i*2, 8:] = -image_coordinate[0] * world_coordinate
+            P[i*2 + 1, 4:8] = world_coordinate
+            P[i*2 + 1, 8:] = -image_coordinate[1] * world_coordinate
+        
+        U, s, VT = np.linalg.svd(P)
+        m = VT[-1, :]
+        self.M = m.reshape((3, 4))
+        logging.debug(f'Calibrated camera matrix M = {self.M}')
 
     def draw_detected_keypoints(self, image=None):
         if not self.court_detected:

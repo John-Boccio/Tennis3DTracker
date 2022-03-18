@@ -76,6 +76,7 @@ while not input_video.atEndOfVideo:
     new_court_detected = tennis_court.detect_court()
     if new_court_detected:
         logging.debug('Recalibrating camera using new detected keypoints')
+        tennis_court.calibrate_camera()
         out_image = tennis_court.draw_detected_court()
     else:
         logging.warning(f'Could not detect tennis court in frame {input_video.currentFrame}')
