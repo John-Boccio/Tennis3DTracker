@@ -61,25 +61,35 @@ output_video = Tennis3DTrackerHelper.OpenCVOutputVideoWrapper(output_video, vide
 assert input_video.totalFrames >= 3, f'Input video {input_video_path} is does not have the minimum number of frames ({input_video.totalFrames} <= 3)'
 
 image_buffer = collections.deque(maxlen=3)
+image_shape = None
 for _ in range(2):
     image = input_video.read_next()
+    if image_shape is None: 
+        image_shape = image.shape
     output_video.write_next(image)
     image = Tennis3DTrackerHelper.image_to_float_and_reshape(image, tracknet_dimensions)
     image_buffer.append(image)
 
+tennis_court = TennisCourtDetector.TennisCourt(image_shape)
 ball_position_buffer = collections.deque(maxlen=15)
+DETECT_COURT_FREQ = 10
+frames_since_last_detect = DETECT_COURT_FREQ
 while not input_video.atEndOfVideo:
     image = input_video.read_next()
     out_image = image.copy()
 
-    tennis_court = TennisCourtDetector.TennisCourt(image)
-    new_court_detected = tennis_court.detect_court()
-    if new_court_detected:
-        logging.debug('Recalibrating camera using new detected keypoints')
-        tennis_court.calibrate_camera()
-        out_image = tennis_court.draw_detected_court()
-    else:
-        logging.warning(f'Could not detect tennis court in frame {input_video.currentFrame}')
+    if frames_since_last_detect >= DETECT_COURT_FREQ:
+        new_court_detected = tennis_court.detect_court(image)
+        if new_court_detected:
+            logging.debug('Recalibrating camera using new detected keypoints')
+            tennis_court.calibrate()
+            frames_since_last_detect = 0
+        else:
+            logging.warning(f'Could not detect tennis court in frame {input_video.currentFrame}')
+
+    if tennis_court._court_keypoints_populated:
+        out_image = tennis_court.draw_detected_court(out_image)
+    frames_since_last_detect += 1
     
     image = Tennis3DTrackerHelper.image_to_float_and_reshape(image, tracknet_dimensions)
     image_buffer.append(image)
@@ -93,7 +103,3 @@ while not input_video.atEndOfVideo:
         out_image = cv2.circle(out_image, position, radius=2, color=color, thickness=2)
     output_video.write_next(out_image)
     logging.debug(f'Ball position in frame[{input_video.currentFrame}] = {ball_position}')
-
-    if input_video.currentFrame == 300:
-        break
-

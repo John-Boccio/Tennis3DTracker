@@ -1,6 +1,7 @@
 from enum import IntEnum
 import os
 import logging
+from black import assert_equivalent
 from chardet import detect
 
 import numpy as np
@@ -167,12 +168,13 @@ class TennisCourt:
         KeypointID.NET_LINE_RIGHT_ENDPOINT : np.array([5.485, 10.51, 1.07]),
     }
 
-    def __init__(self, image, save_images_dir=None, save_images_name='detect-court') -> None:
-        self._image = image.copy()
-        
-        self._rows, self._columns, _ = self._image.shape
+    def __init__(self, image_shape, save_images_dir=None, save_images_name='detect-court') -> None:
+        self._image = None
+        self._image_shape = image_shape
+        self._rows, self._columns, _ = image_shape
         self._court_lines = {}
         self._court_keypoints = {}
+        self._court_keypoints_populated = False
         self.court_detected = False
 
         self.M = np.zeros((3, 4))
@@ -181,8 +183,10 @@ class TennisCourt:
         if save_images_dir is not None:
             self._save_images_path = os.path.join(save_images_dir, save_images_name)
 
-    def detect_court(self) -> bool:
-        image = self._image.copy()
+    def detect_court(self, court_image) -> bool:
+        assert court_image.shape == self._image_shape
+        self._image = court_image.copy()
+        image = court_image
 
         # Step 1. Mask out all colors that are not the colors of the court lines (white)
         white_pixel_boundaries = np.array([[130, 130, 100], [255, 255, 255]])
@@ -238,12 +242,12 @@ class TennisCourt:
             line = np.array(white_pixels[inliers])
             white_pixels = np.array(white_pixels[[not inlier for inlier in inliers]])
 
-            court_line = TennisCourtLine(line, self._image.shape)
+            court_line = TennisCourtLine(line, self._image_shape)
             court_lines.append(court_line)
             logging.debug(f'Found line {court_line}')
 
         if self._save_images_path:
-            original_image_copy = self._image.copy()
+            original_image_copy = court_image.copy()
             for line in court_lines:
                 original_image_copy = line.draw_line_on_image(original_image_copy)
             cv2.imwrite(self._save_images_path + '-lines-detected.jpg', original_image_copy)
@@ -291,8 +295,17 @@ class TennisCourt:
             intersection_id = intersection.value
             l1_id, l2_id = TennisCourt.INTERSECTION_KEYPOINT_PAIRS[intersection_id]
             intersection_pixel = self._court_lines[l1_id].intersection(self._court_lines[l2_id])
-            self._court_keypoints[intersection_id] = intersection_pixel
+
+            # Do a running average on the keypoints
+            if not self._court_keypoints_populated:
+                self._court_keypoints[intersection_id] = intersection_pixel
+            else:
+                alpha = 0.9
+                self._court_keypoints[intersection_id] = alpha * intersection_pixel + (1 - alpha) * self._court_keypoints[intersection_id]
+
             logging.debug(f'{intersection.name} : {intersection_pixel}')
+        
+        self._court_keypoints_populated = True
 
         # Step 7. Net line endpoints that lie within the court are also keypoints
         left_doubles_line_midpoint = self._court_lines[TennisCourt.LineID.LEFT_DOUBLES_LINE].midpoint
@@ -354,27 +367,27 @@ class TennisCourt:
         return M
 
     def draw_detected_keypoints(self, image=None):
-        if not self.court_detected:
+        if not self._court_keypoints_populated:
             return None
 
         if image is None:
             image = self._image.copy()
         
         for intersection_id in self._court_keypoints:
-            row, col = self._court_keypoints[intersection_id]
+            row, col = np.round(self._court_keypoints[intersection_id]).astype(np.uint64)
             image = cv2.circle(image, center=(col, row), radius=5, color=(0, 0, 255), thickness=-1)
         return image
 
     def draw_detected_court(self, image=None):
-        if not self.court_detected:
-            return None
-
         if image is None:
             image = self._image.copy()
 
+        if not self._court_keypoints_populated:
+            return image
+
         for p1_id, p2_id in TennisCourt.DRAW_COURT_KEYPOINT_PAIRS:
-            p1 = self._court_keypoints[p1_id]
-            p2 = self._court_keypoints[p2_id]
+            p1 = np.round(self._court_keypoints[p1_id]).astype(np.uint64)
+            p2 = np.round(self._court_keypoints[p2_id]).astype(np.uint64)
             image = cv2.line(image, (p1[1], p1[0]), (p2[1], p2[0]), color=(0, 0, 0), thickness=3)
         
         p1 = self._court_keypoints[TennisCourt.KeypointID.NET_LINE_LEFT_ENDPOINT]
@@ -389,13 +402,13 @@ if __name__ == '__main__':
     logging.basicConfig(format='%(asctime)s [%(levelname)s] : %(message)s', level=logging.DEBUG)
     current_dir = os.path.dirname(os.path.realpath(__file__))
 
-    test_detect_court = False
+    test_detect_court = True
     if test_detect_court:
         image = cv2.imread(os.path.join(current_dir, "TestImages/tennis_real.jpg"))
-        tennis_court = TennisCourt(image, save_images_dir=os.path.join(current_dir, 'TestImages'))
-        tennis_court.detect_court()
+        tennis_court = TennisCourt(image.shape, save_images_dir=os.path.join(current_dir, 'TestImages'))
+        tennis_court.detect_court(image)
 
-    test_accuracy = True
+    test_accuracy = False
     if test_accuracy:
         dataset_dir = os.path.join(current_dir, 'CourtImageDataset')
         images_dir = os.path.join(dataset_dir, 'Images')
@@ -425,8 +438,8 @@ if __name__ == '__main__':
             image_path = os.path.join(images_dir, image_name)
             image = cv2.imread(image_path)
 
-            tennis_court = TennisCourt(image)
-            detected = tennis_court.detect_court()
+            tennis_court = TennisCourt(image.shape)
+            detected = tennis_court.detect_court(image)
             if not detected:
                 print(f'Could not detect tennis court')
                 continue
