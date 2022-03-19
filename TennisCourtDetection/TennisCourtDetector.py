@@ -159,19 +159,16 @@ class TennisCourt:
     ]
 
     KEYPOINT_WORLD_COORDINATES = {
-        KeypointID.CLOSE_BASELINE_AND_LEFT_DOUBLES_LINE : np.array([0.0, 0.0, 0.0, 1.0]),
-        KeypointID.FAR_BASELINE_AND_LEFT_DOUBLES_LINE : np.array([23.77, 0.0, 0.0, 1.0]),
-        KeypointID.FAR_BASELINE_AND_RIGHT_DOUBLES_LINE : np.array([23.77, 10.97, 0.0, 1.0]),
-        KeypointID.CLOSE_BASELINE_AND_RIGHT_SINGLES_LINE : np.array([0, 10.97, 0, 1.0]),
-        KeypointID.NET_LINE_LEFT_ENDPOINT : np.array([5.485, 0.91, 1.07, 1.0]),
-        KeypointID.NET_LINE_RIGHT_ENDPOINT : np.array([5.485, 10.51, 1.07, 1.0]),
+        KeypointID.CLOSE_BASELINE_AND_LEFT_DOUBLES_LINE : np.array([0.0, 0.0, 0.0]),
+        KeypointID.FAR_BASELINE_AND_LEFT_DOUBLES_LINE : np.array([23.77, 0.0, 0.0]),
+        KeypointID.FAR_BASELINE_AND_RIGHT_DOUBLES_LINE : np.array([23.77, 10.97, 0.0]),
+        KeypointID.CLOSE_BASELINE_AND_RIGHT_DOUBLES_LINE : np.array([0, 10.97, 0]),
+        KeypointID.NET_LINE_LEFT_ENDPOINT : np.array([5.485, 0.91, 1.07]),
+        KeypointID.NET_LINE_RIGHT_ENDPOINT : np.array([5.485, 10.51, 1.07]),
     }
 
     def __init__(self, image, save_images_dir=None, save_images_name='detect-court') -> None:
         self._image = image.copy()
-        height, width, _ = image.shape
-        self._height_scale = 360 / height
-        self._width_scale = 640 / width
         
         self._rows, self._columns, _ = self._image.shape
         self._court_lines = {}
@@ -188,7 +185,7 @@ class TennisCourt:
         image = self._image.copy()
 
         # Step 1. Mask out all colors that are not the colors of the court lines (white)
-        white_pixel_boundaries = np.array([[150, 150, 100], [255, 255, 255]])
+        white_pixel_boundaries = np.array([[130, 130, 100], [255, 255, 255]])
         white_mask = cv2.inRange(image, white_pixel_boundaries[0], white_pixel_boundaries[1])
         image = cv2.bitwise_and(image, image, mask=white_mask)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -317,20 +314,34 @@ class TennisCourt:
 
         return self.court_detected
 
-    def calibrate_camera(self):
+    def calibrate(self):
         keypoint_ordering = [
-            self.KeypointID.CLOSE_BASELINE_AND_LEFT_DOUBLES_LINE,
-            self.KeypointID.FAR_BASELINE_AND_LEFT_DOUBLES_LINE,
-            self.KeypointID.FAR_BASELINE_AND_RIGHT_DOUBLES_LINE,
-            self.KeypointID.CLOSE_BASELINE_AND_RIGHT_SINGLES_LINE,
-            self.KeypointID.NET_LINE_LEFT_ENDPOINT,
-            self.KeypointID.NET_LINE_RIGHT_ENDPOINT,
+            TennisCourt.KeypointID.CLOSE_BASELINE_AND_LEFT_DOUBLES_LINE,
+            TennisCourt.KeypointID.FAR_BASELINE_AND_LEFT_DOUBLES_LINE,
+            TennisCourt.KeypointID.FAR_BASELINE_AND_RIGHT_DOUBLES_LINE,
+            TennisCourt.KeypointID.CLOSE_BASELINE_AND_RIGHT_DOUBLES_LINE,
+            TennisCourt.KeypointID.NET_LINE_LEFT_ENDPOINT,
+            TennisCourt.KeypointID.NET_LINE_RIGHT_ENDPOINT,
         ]
 
-        P = np.zeros((len(keypoint_ordering)*2, 12))
+        image_coordinates = np.zeros((len(keypoint_ordering), 2))
+        world_coordinates = np.zeros((len(keypoint_ordering), 3))
         for i, keypoint in enumerate(keypoint_ordering):
-            world_coordinate = self.KEYPOINT_WORLD_COORDINATES[keypoint]
-            image_coordinate = np.concatenate((self._court_keypoints[keypoint], [1.0]))
+            image_coordinates[i, :] = self._court_keypoints[keypoint]
+            world_coordinates[i, :] = self.KEYPOINT_WORLD_COORDINATES[keypoint]
+        
+        self.M = TennisCourt.calibrate_camera(image_coordinates, world_coordinates)
+
+    @staticmethod
+    def calibrate_camera(image_coordinates, world_coordinates):
+        points = image_coordinates.shape[0]
+        image_coordinates_homogeneous = np.column_stack((image_coordinates, np.ones(points)))
+        world_coordinates_homogeneous = np.column_stack((world_coordinates, np.ones(points)))
+
+        P = np.zeros((points*2, 12))
+        for i in range(points):
+            world_coordinate = world_coordinates_homogeneous[i, :]
+            image_coordinate = image_coordinates_homogeneous[i, :]
             P[i*2, :4] = world_coordinate
             P[i*2, 8:] = -image_coordinate[0] * world_coordinate
             P[i*2 + 1, 4:8] = world_coordinate
@@ -338,8 +349,9 @@ class TennisCourt:
         
         U, s, VT = np.linalg.svd(P)
         m = VT[-1, :]
-        self.M = m.reshape((3, 4))
-        logging.debug(f'Calibrated camera matrix M = {self.M}')
+        M = m.reshape((3, 4))
+        logging.debug(f'Calibrated camera matrix M = {M}')
+        return M
 
     def draw_detected_keypoints(self, image=None):
         if not self.court_detected:
@@ -376,6 +388,63 @@ class TennisCourt:
 if __name__ == '__main__':
     logging.basicConfig(format='%(asctime)s [%(levelname)s] : %(message)s', level=logging.DEBUG)
     current_dir = os.path.dirname(os.path.realpath(__file__))
-    image = cv2.imread(os.path.join(current_dir, "TestImages/tennis_real.jpg"))
-    tennis_court = TennisCourt(image, save_images_dir=os.path.join(current_dir, 'TestImages'))
-    tennis_court.detect_court()
+
+    test_detect_court = False
+    if test_detect_court:
+        image = cv2.imread(os.path.join(current_dir, "TestImages/tennis_real.jpg"))
+        tennis_court = TennisCourt(image, save_images_dir=os.path.join(current_dir, 'TestImages'))
+        tennis_court.detect_court()
+
+    test_accuracy = True
+    if test_accuracy:
+        dataset_dir = os.path.join(current_dir, 'CourtImageDataset')
+        images_dir = os.path.join(dataset_dir, 'Images')
+        
+        labels = {}
+        with open(os.path.join(dataset_dir, 'labels.csv')) as file:
+            lines = [line.split(',') for line in file]
+            lines = lines[1:]
+
+            for line in lines:
+                image_name = line[0]
+                labels[image_name] = {
+                    TennisCourt.KeypointID.CLOSE_BASELINE_AND_LEFT_DOUBLES_LINE : np.array(list(map(int, line[1:3]))),
+                    TennisCourt.KeypointID.FAR_BASELINE_AND_LEFT_DOUBLES_LINE : np.array(list(map(int, line[3:5]))),
+                    TennisCourt.KeypointID.FAR_BASELINE_AND_RIGHT_DOUBLES_LINE : np.array(list(map(int, line[5:7]))),
+                    TennisCourt.KeypointID.CLOSE_BASELINE_AND_RIGHT_DOUBLES_LINE : np.array(list(map(int, line[7:9]))),
+                    TennisCourt.KeypointID.NET_LINE_LEFT_ENDPOINT : np.array(list(map(int, line[9:11]))),
+                    TennisCourt.KeypointID.NET_LINE_RIGHT_ENDPOINT : np.array(list(map(int, line[11:13]))),
+                }
+        
+        keypoint_MSE = {}
+        number_of_images = 0
+        for image_name in os.listdir(images_dir):
+            number_of_images += 1
+            print(f'Testing image {image_name}:')
+
+            image_path = os.path.join(images_dir, image_name)
+            image = cv2.imread(image_path)
+
+            tennis_court = TennisCourt(image)
+            detected = tennis_court.detect_court()
+            if not detected:
+                print(f'Could not detect tennis court')
+                continue
+            tennis_court.calibrate()
+
+            labels_for_image = labels[image_name]
+            keypoint_MSE = {}
+            for keypoint in TennisCourt.KEYPOINT_WORLD_COORDINATES:
+                detected_coordinates = tennis_court._court_keypoints[keypoint]
+                labeled_coordinates = labels_for_image[keypoint]
+                mse = np.mean((detected_coordinates - labeled_coordinates)**2)
+                print(f'{keypoint.name} MSE: {mse}')
+                if not keypoint in keypoint_MSE:
+                    keypoint_MSE[keypoint] = mse
+                else:
+                    keypoint_MSE[keypoint] += mse
+        
+        for keypoint in keypoint_MSE:
+            keypoint_MSE[keypoint] = keypoint_MSE[keypoint] / number_of_images
+        
+        print(f'Average MSE error for each keypoint: {keypoint_MSE}')
