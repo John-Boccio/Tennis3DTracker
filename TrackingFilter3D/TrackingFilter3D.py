@@ -20,13 +20,13 @@ class TennisBallTracker3D:
             points = JulierSigmaPoints(6)
             self.filter = UnscentedKalmanFilter(6, 3, self.delta_t, TennisBallTracker3D.hx, TennisBallTracker3D.fx, points)
         self.filter.x = np.array([0.0, 4.25, 1.0, 0.0, 0.0, 0.0])
-        self.filter.R = np.identity(3) * 0.01
+        self.filter.R = np.identity(3) * 0.05
         self.filter.Q = np.identity(6)
         self.filter.Q[:3, :3] *= 1.0
-        self.filter.Q[3:, 3:] *= 5.0
+        self.filter.Q[3:, 3:] *= 2.0
 
-        self.filter.P[:3, :3] *= 2.0
-        self.filter.P[3:, 3:] *= 0.5
+        self.filter.P[:3, :3] *= 1.0
+        self.filter.P[3:, 3:] *= 2.0
 
         self.state_history = None
         self.confidence_low_history = None
