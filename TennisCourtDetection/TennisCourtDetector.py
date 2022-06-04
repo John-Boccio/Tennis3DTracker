@@ -164,8 +164,8 @@ class TennisCourt:
         KeypointID.FAR_BASELINE_AND_LEFT_DOUBLES_LINE : np.array([23.77, 0.0, 0.0]),
         KeypointID.FAR_BASELINE_AND_RIGHT_DOUBLES_LINE : np.array([23.77, 10.97, 0.0]),
         KeypointID.CLOSE_BASELINE_AND_RIGHT_DOUBLES_LINE : np.array([0, 10.97, 0]),
-        KeypointID.NET_LINE_LEFT_ENDPOINT : np.array([5.485, 0.91, 1.07]),
-        KeypointID.NET_LINE_RIGHT_ENDPOINT : np.array([5.485, 10.51, 1.07]),
+        KeypointID.NET_LINE_LEFT_ENDPOINT : np.array([11.885, 0.91, 1.07]),
+        KeypointID.NET_LINE_RIGHT_ENDPOINT : np.array([11.885, 10.51, 1.07]),
     }
 
     def __init__(self, image_shape, save_images_dir=None, save_images_name='detect-court') -> None:
@@ -300,7 +300,7 @@ class TennisCourt:
             if not self._court_keypoints_populated:
                 self._court_keypoints[intersection_id] = intersection_pixel
             else:
-                alpha = 0.9
+                alpha = 0.5
                 self._court_keypoints[intersection_id] = alpha * intersection_pixel + (1 - alpha) * self._court_keypoints[intersection_id]
 
             logging.debug(f'{intersection.name} : {intersection_pixel}')

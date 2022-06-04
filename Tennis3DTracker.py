@@ -3,10 +3,12 @@ import os
 import logging
 import collections
 import cv2
+import numpy as np
 
 import TennisCourtDetection
 import Tennis3DTrackerHelper
 from TennisCourtDetection import TennisCourtDetector
+from TrackingFilter3D import TrackingFilter3D
 
 # Set up logging
 logging.basicConfig(format='%(asctime)s [%(levelname)s] : %(message)s', level=logging.DEBUG)
@@ -60,6 +62,9 @@ output_video = Tennis3DTrackerHelper.OpenCVOutputVideoWrapper(output_video, vide
 # TrackNet uses 3 consecutive frames to predict where the ball is so the first 2 frames have no prediction
 assert input_video.totalFrames >= 3, f'Input video {input_video_path} is does not have the minimum number of frames ({input_video.totalFrames} <= 3)'
 
+# For tracking the 3D position
+tracking_filter_3d = TrackingFilter3D.TennisBallTracker3D(fps, filter='EKF')
+
 image_buffer = collections.deque(maxlen=3)
 image_shape = None
 for _ in range(2):
@@ -72,9 +77,11 @@ for _ in range(2):
 
 tennis_court = TennisCourtDetector.TennisCourt(image_shape)
 ball_position_buffer = collections.deque(maxlen=15)
+reprojection_buffer = collections.deque(maxlen=15)
 DETECT_COURT_FREQ = 10
 frames_since_last_detect = DETECT_COURT_FREQ
-while not input_video.atEndOfVideo:
+frames_to_process = 50
+while not input_video.atEndOfVideo and input_video.currentFrame <= frames_to_process:
     image = input_video.read_next()
     out_image = image.copy()
 
@@ -96,10 +103,22 @@ while not input_video.atEndOfVideo:
 
     ball_position = Tennis3DTrackerHelper.predict_2D_ball_position(tracknet, image_buffer, video_dimensions, tracknet_dimensions)
     ball_position_buffer.append(ball_position)
-    for i, position in enumerate(ball_position_buffer):
+
+    if ball_position is not None:
+        tracking_filter_3d.update(tennis_court.M, ball_position)
+        reprojection_buffer.append(tracking_filter_3d.reprojection)
+    else:
+        tracking_filter_3d.skip_update()
+
+    for i, (position, reprojection) in enumerate(zip(ball_position_buffer, reprojection_buffer)):
         if position is None:
             continue
         color = Tennis3DTrackerHelper.ROYGBIVP_BGR_COLORS[i % len(Tennis3DTrackerHelper.ROYGBIVP_BGR_COLORS)]
         out_image = cv2.circle(out_image, position, radius=2, color=color, thickness=2)
+        out_image = cv2.circle(out_image, np.round(reprojection).astype('int'), radius=2, color=(0,255,0), thickness=2)
+    
     output_video.write_next(out_image)
     logging.debug(f'Ball position in frame[{input_video.currentFrame}] = {ball_position}')
+
+
+tracking_filter_3d.create_plots('plots')
